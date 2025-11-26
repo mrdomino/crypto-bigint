@@ -444,6 +444,35 @@ mod tests {
         );
     }
 
+    /// Diagnostic test: Check borrowing_sub specifically
+    /// This might reveal issues with u128 arithmetic under QEMU
+    #[test]
+    fn borrowing_sub_diagnostic() {
+        // Test: 55 - 8192 should produce a borrow
+        let val_55 = U256::from_u32(55);
+        let val_8192 = U256::from_u32(8192);
+
+        let (result, borrow) = val_55.borrowing_sub(&val_8192, Limb::ZERO);
+
+        // The result should be 55 - 8192 wrapped (a very large number)
+        // The borrow should be non-zero (indicating underflow)
+        assert!(
+            borrow.0 != 0,
+            "borrowing_sub(55, 8192) should produce non-zero borrow, got borrow={}",
+            borrow.0
+        );
+
+        // Test: 8192 - 55 should NOT produce a borrow
+        let (result2, borrow2) = val_8192.borrowing_sub(&val_55, Limb::ZERO);
+
+        assert_eq!(
+            borrow2.0, 0,
+            "borrowing_sub(8192, 55) should produce zero borrow, got borrow={}",
+            borrow2.0
+        );
+        assert_eq!(result2, U256::from_u32(8192 - 55));
+    }
+
     /// Test that random bytes are sampled consecutively.
     #[test]
     fn random_bits_4_bytes_sequential() {
