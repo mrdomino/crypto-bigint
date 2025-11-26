@@ -504,6 +504,71 @@ mod tests {
         assert_ne!(first_val, second_val, "Values should differ between calls");
     }
 
+    /// Diagnostic: Compare native > comparison with ct_lt
+    /// This tests if the issue is specifically in ct_lt / borrowing_sub
+    #[test]
+    fn ct_lt_vs_native_comparison() {
+        use subtle::ConstantTimeLess;
+
+        // Test a range of values to see if ct_lt matches native comparison
+        let modulus = U256::from_u32(8192);
+
+        // Values that should be LESS than 8192 (ct_lt should return true)
+        let less_values = [0u32, 1, 55, 100, 1000, 8191];
+        for v in less_values {
+            let val = U256::from_u32(v);
+            let ct_result: bool = val.ct_lt(&modulus).into();
+            let native_result = v < 8192;
+            assert_eq!(
+                ct_result, native_result,
+                "Mismatch for value {}: ct_lt={}, native={}",
+                v, ct_result, native_result
+            );
+        }
+
+        // Values that should be GREATER OR EQUAL to 8192 (ct_lt should return false)
+        let ge_values = [8192u32, 8193, 10000, 16383, 65535];
+        for v in ge_values {
+            let val = U256::from_u32(v);
+            let ct_result: bool = val.ct_lt(&modulus).into();
+            let native_result = v < 8192;
+            assert_eq!(
+                ct_result, native_result,
+                "Mismatch for value {}: ct_lt={}, native={}",
+                v, ct_result, native_result
+            );
+        }
+    }
+
+    /// Diagnostic: Test the old algorithm's pre-filter logic
+    /// This simulates what the OLD random_mod_core does
+    #[test]
+    fn old_algorithm_prefilter_simulation() {
+        let mut rng = get_four_sequential_rng();
+
+        let n_bits = 14u32;
+        let hi_word_modulus: u64 = 8192;
+        let mask: u64 = !0 >> hi_word_modulus.leading_zeros();
+
+        // Generate a value using the OLD algorithm's approach
+        let mut hi_word = rng.next_u64() & mask;
+
+        // Pre-filter: reject if > hi_word_modulus (uses native comparison)
+        let mut iterations = 0;
+        while hi_word > hi_word_modulus {
+            hi_word = rng.next_u64() & mask;
+            iterations += 1;
+            assert!(iterations < 1000, "Pre-filter loop running too long");
+        }
+
+        // After pre-filter, hi_word <= 8192
+        assert!(
+            hi_word <= 8192,
+            "After pre-filter, hi_word={} should be <= 8192",
+            hi_word
+        );
+    }
+
     /// Test that random bytes are sampled consecutively.
     #[test]
     fn random_bits_4_bytes_sequential() {
