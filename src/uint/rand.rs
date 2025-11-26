@@ -540,6 +540,66 @@ mod tests {
         }
     }
 
+    /// Diagnostic: Compare fill_bytes vs next_u64 byte sequences
+    /// This tests if the RNG produces the same bytes regardless of how we consume them
+    #[test]
+    fn rng_fill_bytes_vs_next_u64() {
+        use rand_core::RngCore;
+
+        // Test with fill_bytes
+        let mut rng1 = get_four_sequential_rng();
+        let mut buf = [0u8; 8];
+        rng1.fill_bytes(&mut buf);
+        let fill_bytes_result = u64::from_le_bytes(buf);
+
+        // Test with next_u64
+        let mut rng2 = get_four_sequential_rng();
+        let next_u64_result = rng2.next_u64();
+
+        assert_eq!(
+            fill_bytes_result, next_u64_result,
+            "fill_bytes ({:#018x}) and next_u64 ({:#018x}) should produce same value",
+            fill_bytes_result, next_u64_result
+        );
+
+        // Test a few more to be sure
+        for _ in 0..10 {
+            rng1.fill_bytes(&mut buf);
+            let fb = u64::from_le_bytes(buf);
+            let nu = rng2.next_u64();
+            assert_eq!(fb, nu, "fill_bytes and next_u64 diverged");
+        }
+    }
+
+    /// Diagnostic: Compare 4-byte fill_bytes sequences
+    /// The new algorithm uses 4-byte chunks for partial limbs
+    #[test]
+    fn rng_fill_4_bytes_consistency() {
+        use rand_core::RngCore;
+
+        // Fill 8 bytes in two 4-byte chunks
+        let mut rng1 = get_four_sequential_rng();
+        let mut buf1 = [0u8; 4];
+        let mut buf2 = [0u8; 4];
+        rng1.fill_bytes(&mut buf1);
+        rng1.fill_bytes(&mut buf2);
+
+        // Fill 8 bytes in one chunk
+        let mut rng2 = get_four_sequential_rng();
+        let mut buf_full = [0u8; 8];
+        rng2.fill_bytes(&mut buf_full);
+
+        // They should be the same (4-byte sequential property of ChaCha)
+        assert_eq!(
+            &buf1[..], &buf_full[0..4],
+            "First 4 bytes should match"
+        );
+        assert_eq!(
+            &buf2[..], &buf_full[4..8],
+            "Second 4 bytes should match"
+        );
+    }
+
     /// Diagnostic: Test the old algorithm's pre-filter logic
     /// This simulates what the OLD random_mod_core does
     #[test]
