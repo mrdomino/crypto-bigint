@@ -1,7 +1,7 @@
 //! Random number generator support
 
 use super::{Uint, Word};
-use crate::{Encoding, Limb, NonZero, Random, RandomBits, RandomBitsError, RandomMod, Zero};
+use crate::{Limb, NonZero, Random, RandomBits, RandomBitsError, RandomMod, Zero};
 use rand_core::{RngCore, TryRngCore};
 use subtle::ConstantTimeLess;
 
@@ -30,7 +30,7 @@ pub(crate) fn random_bits_core<R: TryRngCore + ?Sized>(
     rng: &mut R,
     zeroed_limbs: &mut [Limb],
     bit_length: u32,
-) -> Result<(), RandomBitsError<R::Error>> {
+) -> Result<(), R::Error> {
     if bit_length == 0 {
         return Ok(());
     }
@@ -43,8 +43,7 @@ pub(crate) fn random_bits_core<R: TryRngCore + ?Sized>(
     let mask = Word::MAX >> ((Word::BITS - partial_limb) % Word::BITS);
 
     for i in 0..nonzero_limbs - 1 {
-        rng.try_fill_bytes(&mut buffer)
-            .map_err(RandomBitsError::RandCore)?;
+        rng.try_fill_bytes(&mut buffer)?;
         zeroed_limbs[i] = Limb(Word::from_le_bytes(buffer));
     }
 
@@ -62,8 +61,7 @@ pub(crate) fn random_bits_core<R: TryRngCore + ?Sized>(
         buffer.as_mut_slice()
     };
 
-    rng.try_fill_bytes(slice)
-        .map_err(RandomBitsError::RandCore)?;
+    rng.try_fill_bytes(slice)?;
     zeroed_limbs[nonzero_limbs - 1] = Limb(Word::from_le_bytes(buffer) & mask);
 
     Ok(())
@@ -95,7 +93,7 @@ impl<const LIMBS: usize> RandomBits for Uint<LIMBS> {
             });
         }
         let mut limbs = [Limb::ZERO; LIMBS];
-        random_bits_core(rng, &mut limbs, bit_length)?;
+        random_bits_core(rng, &mut limbs, bit_length).map_err(RandomBitsError::RandCore)?;
         Ok(Self::from(limbs))
     }
 }
@@ -128,43 +126,19 @@ pub(super) fn random_mod_core<T, R: TryRngCore + ?Sized>(
 where
     T: AsMut<[Limb]> + AsRef<[Limb]> + ConstantTimeLess + Zero,
 {
-    #[cfg(target_pointer_width = "64")]
-    let mut next_word = || rng.try_next_u64();
-    #[cfg(target_pointer_width = "32")]
-    let mut next_word = || rng.try_next_u32();
-
-    let n_limbs = n_bits.div_ceil(Limb::BITS) as usize;
-
-    let hi_word_modulus = modulus.as_ref().as_ref()[n_limbs - 1].0;
-    let mask = !0 >> hi_word_modulus.leading_zeros();
-    let mut hi_word = next_word()? & mask;
-
     loop {
-        while hi_word > hi_word_modulus {
-            hi_word = next_word()? & mask;
-        }
-        // Set high limb
-        n.as_mut()[n_limbs - 1] = Limb::from_le_bytes(hi_word.to_le_bytes());
-        // Set low limbs
-        for i in 0..n_limbs - 1 {
-            // Need to deserialize from little-endian to make sure that two 32-bit limbs
-            // deserialized sequentially are equal to one 64-bit limb produced from the same
-            // byte stream.
-            n.as_mut()[i] = Limb::from_le_bytes(next_word()?.to_le_bytes());
-        }
-        // If the high limb is equal to the modulus' high limb, it's still possible
-        // that the full uint is too big so we check and repeat if it is.
+        random_bits_core(rng, n.as_mut(), n_bits)?;
+
         if n.ct_lt(modulus).into() {
             break;
         }
-        hi_word = next_word()? & mask;
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::uint::rand::random_bits_core;
+    use crate::uint::rand::{random_bits_core, random_mod_core};
     use crate::{Limb, NonZero, Random, RandomBits, RandomMod, U256, U1024, Uint};
     use chacha20::ChaCha8Rng;
     use rand_core::{RngCore, SeedableRng};
@@ -285,6 +259,188 @@ mod tests {
             [
                 198, 196, 132, 164, 240, 211, 223, 12, 36, 189, 139, 48, 94, 1, 123, 253
             ]
+        );
+    }
+
+    /// Make sure random_mod output is consistent across platforms
+    #[test]
+    fn random_mod_platform_independence() {
+        let mut rng = get_four_sequential_rng();
+
+        let modulus = NonZero::new(U256::from_u32(8192)).unwrap();
+        let mut vals = [U256::ZERO, U256::ZERO, U256::ZERO, U256::ZERO, U256::ZERO];
+        for val in &mut vals {
+            random_mod_core(&mut rng, val, &modulus, modulus.bits_vartime()).unwrap();
+        }
+        let expected = [55, 3378, 2172, 1657, 5323];
+        for (want, got) in expected.into_iter().zip(vals.into_iter()) {
+            assert_eq!(got, U256::from_u32(want));
+        }
+
+        let mut state = [0u8; 16];
+        rng.fill_bytes(&mut state);
+
+        assert_eq!(
+            state,
+            [
+                60, 146, 46, 106, 157, 83, 56, 212, 186, 104, 211, 210, 125, 28, 120, 239
+            ],
+        );
+    }
+
+    /// Diagnostic test: Check what random_bits_core produces for small bit lengths
+    /// This helps identify if the issue is in random_bits_core itself
+    #[test]
+    fn random_bits_core_small_bits_diagnostic() {
+        let mut rng = get_four_sequential_rng();
+
+        // Test 14-bit generation (same as the modulus test uses)
+        let mut val = U256::ZERO;
+        random_bits_core(&mut rng, val.as_mut_limbs(), 14).expect("safe");
+
+        // The value should be at most 14 bits (< 16384)
+        assert!(val < U256::from_u32(16384), "14-bit value should be < 16384, got {:?}", val);
+
+        // Generate several more and verify they're all in range
+        for _ in 0..10 {
+            let mut val = U256::ZERO;
+            random_bits_core(&mut rng, val.as_mut_limbs(), 14).expect("safe");
+            assert!(val < U256::from_u32(16384), "14-bit value should be < 16384");
+        }
+    }
+
+    /// Diagnostic test: Use 2^14-1 modulus (minimal rejection)
+    /// If this hangs, the issue is NOT in rejection sampling
+    #[test]
+    fn random_mod_minimal_rejection() {
+        let mut rng = get_four_sequential_rng();
+
+        // Use 16383 = 2^14 - 1, so almost no rejection (only 1/16384 chance)
+        // bits_vartime(16383) = 14, so we generate 14-bit values
+        let modulus = NonZero::new(U256::from_u32(16383)).unwrap();
+
+        // Verify bits_vartime returns 14
+        assert_eq!(modulus.bits_vartime(), 14);
+
+        // This should complete with minimal rejection
+        let mut val = U256::ZERO;
+        random_mod_core(&mut rng, &mut val, &modulus, modulus.bits_vartime()).unwrap();
+
+        // Value should be < 16383
+        assert!(val < U256::from_u32(16383));
+    }
+
+    /// Diagnostic test: Verify ct_lt comparison works correctly for small values
+    #[test]
+    fn ct_lt_small_values_diagnostic() {
+        use subtle::ConstantTimeLess;
+
+        // Test values around 8192
+        let modulus = U256::from_u32(8192);
+
+        // Values less than 8192 should return true
+        assert!(bool::from(U256::from_u32(0).ct_lt(&modulus)), "0 < 8192");
+        assert!(bool::from(U256::from_u32(55).ct_lt(&modulus)), "55 < 8192");
+        assert!(bool::from(U256::from_u32(8191).ct_lt(&modulus)), "8191 < 8192");
+
+        // Values >= 8192 should return false
+        assert!(!bool::from(U256::from_u32(8192).ct_lt(&modulus)), "8192 !< 8192");
+        assert!(!bool::from(U256::from_u32(8193).ct_lt(&modulus)), "8193 !< 8192");
+        assert!(!bool::from(U256::from_u32(16383).ct_lt(&modulus)), "16383 !< 8192");
+    }
+
+    /// Diagnostic test: Manually step through random_mod_core logic
+    #[test]
+    fn random_mod_manual_step_diagnostic() {
+        use subtle::ConstantTimeLess;
+
+        let mut rng = get_four_sequential_rng();
+        let modulus = NonZero::new(U256::from_u32(8192)).unwrap();
+        let n_bits = modulus.bits_vartime();
+
+        // Should be 14 bits for 8192
+        assert_eq!(n_bits, 14, "bits_vartime for 8192 should be 14");
+
+        // Generate a value using random_bits_core
+        let mut n = U256::ZERO;
+        random_bits_core(&mut rng, n.as_mut_limbs(), n_bits).expect("safe");
+
+        // Check the generated value
+        let n_u64 = n.as_limbs()[0].0;
+        assert!(n_u64 < 16384, "Generated value {} should be < 16384 (14 bits)", n_u64);
+
+        // Check comparison (compare against the inner value, not NonZero wrapper)
+        let modulus_inner: &U256 = &modulus;
+        let is_less = n.ct_lt(modulus_inner);
+        let is_less_bool: bool = is_less.into();
+
+        // If n < 8192, is_less should be true
+        if n_u64 < 8192 {
+            assert!(is_less_bool, "n={} < 8192, but ct_lt returned false", n_u64);
+        } else {
+            assert!(!is_less_bool, "n={} >= 8192, but ct_lt returned true", n_u64);
+        }
+    }
+
+    /// Diagnostic test: Detailed debug info for CI failure analysis
+    /// This test prints values to help debug the cross/QEMU hang
+    #[test]
+    fn random_mod_detailed_debug() {
+        extern crate std;
+        use std::eprintln;
+        use subtle::ConstantTimeLess;
+
+        let mut rng = get_four_sequential_rng();
+
+        // First, verify the raw bytes from the RNG
+        let mut raw_bytes = [0u8; 8];
+        rng.fill_bytes(&mut raw_bytes);
+        eprintln!("First 8 raw bytes from ChaCha8: {:?}", raw_bytes);
+
+        // Reset RNG
+        let mut rng = get_four_sequential_rng();
+
+        // Test random_bits_core with 14 bits
+        let mut n = U256::ZERO;
+        random_bits_core(&mut rng, n.as_mut_limbs(), 14).expect("safe");
+        eprintln!("After random_bits_core(14): limbs = {:?}", n.as_limbs());
+        eprintln!("First limb value: {}", n.as_limbs()[0].0);
+
+        // Reset RNG again for the full test
+        let mut rng = get_four_sequential_rng();
+        let modulus = NonZero::new(U256::from_u32(8192)).unwrap();
+
+        // Test with bounded iteration count to prevent hang
+        let mut iteration = 0;
+        let max_iterations = 100;
+        let mut n = U256::ZERO;
+
+        while iteration < max_iterations {
+            random_bits_core(&mut rng, n.as_mut_limbs(), 14).expect("safe");
+            let n_val = n.as_limbs()[0].0;
+
+            let modulus_inner: &U256 = &modulus;
+            let is_less = n.ct_lt(modulus_inner);
+            let is_less_bool: bool = is_less.into();
+
+            eprintln!(
+                "Iteration {}: n={}, is_less={}, expected_is_less={}",
+                iteration, n_val, is_less_bool, n_val < 8192
+            );
+
+            if is_less_bool {
+                eprintln!("Breaking at iteration {} with n={}", iteration, n_val);
+                break;
+            }
+
+            iteration += 1;
+        }
+
+        assert!(
+            iteration < max_iterations,
+            "Loop did not terminate after {} iterations. Last n={}",
+            max_iterations,
+            n.as_limbs()[0].0
         );
     }
 
