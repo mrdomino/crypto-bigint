@@ -452,7 +452,7 @@ mod tests {
         let val_55 = U256::from_u32(55);
         let val_8192 = U256::from_u32(8192);
 
-        let (result, borrow) = val_55.borrowing_sub(&val_8192, Limb::ZERO);
+        let (_result, borrow) = val_55.borrowing_sub(&val_8192, Limb::ZERO);
 
         // The result should be 55 - 8192 wrapped (a very large number)
         // The borrow should be non-zero (indicating underflow)
@@ -471,6 +471,37 @@ mod tests {
             borrow2.0
         );
         assert_eq!(result2, U256::from_u32(8192 - 55));
+    }
+
+    /// Diagnostic test: Check repeated calls to random_bits_core
+    /// This tests if there's an issue with non-zeroed buffers
+    #[test]
+    fn random_bits_core_repeated_calls() {
+        let mut rng = get_four_sequential_rng();
+        let mut n = U256::ZERO;
+
+        // First call - should produce a 14-bit value
+        random_bits_core(&mut rng, n.as_mut_limbs(), 14).expect("safe");
+        let first_val = n.as_limbs()[0].0;
+        assert!(first_val < 16384, "First value {} should be < 16384", first_val);
+
+        // Check that high limbs are still zero
+        assert_eq!(n.as_limbs()[1].0, 0, "Limb 1 should be zero");
+        assert_eq!(n.as_limbs()[2].0, 0, "Limb 2 should be zero");
+        assert_eq!(n.as_limbs()[3].0, 0, "Limb 3 should be zero");
+
+        // Second call - with non-zero first limb (simulating rejection loop)
+        random_bits_core(&mut rng, n.as_mut_limbs(), 14).expect("safe");
+        let second_val = n.as_limbs()[0].0;
+        assert!(second_val < 16384, "Second value {} should be < 16384", second_val);
+
+        // High limbs should still be zero
+        assert_eq!(n.as_limbs()[1].0, 0, "Limb 1 should still be zero after second call");
+        assert_eq!(n.as_limbs()[2].0, 0, "Limb 2 should still be zero after second call");
+        assert_eq!(n.as_limbs()[3].0, 0, "Limb 3 should still be zero after second call");
+
+        // Values should be different (with overwhelming probability)
+        assert_ne!(first_val, second_val, "Values should differ between calls");
     }
 
     /// Test that random bytes are sampled consecutively.
