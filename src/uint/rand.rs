@@ -540,6 +540,28 @@ mod tests {
         }
     }
 
+    /// Diagnostic: Call random_mod_core 5 times like random_mod_platform_independence does
+    #[test]
+    fn random_mod_core_five_calls() {
+        let mut rng = get_four_sequential_rng();
+        let modulus = NonZero::new(U256::from_u32(8192)).unwrap();
+
+        let expected = [55u32, 3378, 2172, 1657, 5323];
+
+        for (i, &exp) in expected.iter().enumerate() {
+            let mut val = U256::ZERO;
+            random_mod_core(&mut rng, &mut val, &modulus, modulus.bits_vartime()).unwrap();
+            assert_eq!(
+                val,
+                U256::from_u32(exp),
+                "Call {} expected {} but got {:?}",
+                i,
+                exp,
+                val
+            );
+        }
+    }
+
     /// Diagnostic: Call the ACTUAL random_mod_core function once
     /// If this hangs but random_mod_core_bounded_loop_diagnostic passes,
     /// the issue is in random_mod_core itself, not the logic
