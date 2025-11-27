@@ -540,6 +540,22 @@ mod tests {
         }
     }
 
+    /// Diagnostic: Call the ACTUAL random_mod_core function once
+    /// If this hangs but random_mod_core_bounded_loop_diagnostic passes,
+    /// the issue is in random_mod_core itself, not the logic
+    #[test]
+    fn random_mod_core_single_call() {
+        let mut rng = get_four_sequential_rng();
+        let modulus = NonZero::new(U256::from_u32(8192)).unwrap();
+        let mut val = U256::ZERO;
+
+        // Call the actual random_mod_core function
+        random_mod_core(&mut rng, &mut val, &modulus, modulus.bits_vartime()).unwrap();
+
+        // Should get 55 (the first value < 8192)
+        assert_eq!(val, U256::from_u32(55), "First random_mod value should be 55");
+    }
+
     /// Diagnostic: Assert that ct_lt matches native for the EXACT values
     /// that random_bits_core generates. This test FAILS (not hangs) if broken.
     #[test]
