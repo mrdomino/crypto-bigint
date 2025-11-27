@@ -556,6 +556,31 @@ mod tests {
         assert_eq!(val, U256::from_u32(55), "First random_mod value should be 55");
     }
 
+    /// Diagnostic: Sample 1000 values from random_bits_core and verify ct_lt
+    /// This tests if the issue manifests after many iterations
+    #[test]
+    fn random_bits_ct_lt_1000_samples() {
+        use subtle::ConstantTimeLess;
+
+        let mut rng = get_four_sequential_rng();
+        let modulus = U256::from_u32(8192);
+
+        for i in 0..1000 {
+            let mut n = U256::ZERO;
+            random_bits_core(&mut rng, n.as_mut_limbs(), 14).expect("safe");
+
+            let n_val = n.as_limbs()[0].0;
+            let native_lt = n_val < 8192;
+            let ct_lt_result: bool = n.ct_lt(&modulus).into();
+
+            assert_eq!(
+                ct_lt_result, native_lt,
+                "MISMATCH at iteration {}: n={}, native_lt={}, ct_lt={}",
+                i, n_val, native_lt, ct_lt_result
+            );
+        }
+    }
+
     /// Diagnostic: Assert that ct_lt matches native for the EXACT values
     /// that random_bits_core generates. This test FAILS (not hangs) if broken.
     #[test]
