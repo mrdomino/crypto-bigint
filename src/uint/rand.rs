@@ -540,6 +540,59 @@ mod tests {
         }
     }
 
+    /// Diagnostic: Test the full random_mod_core with minimal iterations
+    /// This isolates the issue by limiting the loop iterations
+    #[test]
+    fn random_mod_core_bounded_loop_diagnostic() {
+        extern crate std;
+        use std::eprintln;
+        use subtle::ConstantTimeLess;
+
+        let mut rng = get_four_sequential_rng();
+        let modulus = NonZero::new(U256::from_u32(8192)).unwrap();
+        let n_bits = modulus.bits_vartime();
+
+        // Should be 14 bits for 8192
+        assert_eq!(n_bits, 14, "bits_vartime for 8192 should be 14");
+
+        let mut n = U256::ZERO;
+        let mut iterations = 0;
+        const MAX_ITERATIONS: usize = 100;
+
+        loop {
+            random_bits_core(&mut rng, n.as_mut_limbs(), n_bits).expect("safe");
+
+            let n_val = n.as_limbs()[0].0;
+            let modulus_inner: &U256 = &modulus;
+            let is_less: bool = n.ct_lt(modulus_inner).into();
+
+            eprintln!(
+                "iter={} n={} n<8192={} ct_lt={}",
+                iterations, n_val, n_val < 8192, is_less
+            );
+
+            if is_less {
+                eprintln!("SUCCESS: Found valid value {} at iteration {}", n_val, iterations);
+                break;
+            }
+
+            iterations += 1;
+            if iterations >= MAX_ITERATIONS {
+                panic!(
+                    "FAILED: Loop did not terminate after {} iterations. Last n={}",
+                    MAX_ITERATIONS, n_val
+                );
+            }
+        }
+
+        // Verify the final value is correct
+        assert!(
+            n < U256::from_u32(8192),
+            "Final value {} should be < 8192",
+            n.as_limbs()[0].0
+        );
+    }
+
     /// Diagnostic: Test u128 arithmetic that borrowing_sub relies on
     /// This specifically tests the pattern used in primitives::borrowing_sub
     #[test]
