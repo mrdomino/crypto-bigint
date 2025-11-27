@@ -126,7 +126,11 @@ pub(super) fn random_mod_core<T, R: TryRngCore + ?Sized>(
 where
     T: AsMut<[Limb]> + AsRef<[Limb]> + ConstantTimeLess + Zero,
 {
+    extern crate std;
+    use std::eprintln;
+    eprintln!("random_mod_core");
     loop {
+        eprintln!("tick");
         random_bits_core(rng, n.as_mut(), n_bits)?;
 
         if n.ct_lt(modulus).into() {
