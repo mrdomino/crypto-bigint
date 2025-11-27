@@ -128,10 +128,11 @@ where
 {
     extern crate std;
     use std::eprintln;
-    eprintln!("random_mod_core");
+    eprintln!("mod={:?}", modulus.as_ref().as_ref());
     loop {
-        eprintln!("tick");
-        random_bits_core(rng, n.as_mut(), n_bits)?;
+        let limbs = n.as_mut();
+        random_bits_core(rng, limbs, n_bits)?;
+        eprintln!("limbs={limbs:?}");
 
         if n.ct_lt(modulus).into() {
             break;
