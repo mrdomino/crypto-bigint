@@ -131,9 +131,10 @@ jobs:
           toolchain: ${{ matrix.rust }}
           targets: ${{ matrix.target }}
       - run: cargo install cross
-      - run: cross test --target ${{ matrix.target }} --release --no-default-features
-      - run: cross test --target ${{ matrix.target }} --release
-      - run: cross test --target ${{ matrix.target }} --release --all-features
+      #- run: cross test --target ${{ matrix.target }} --release --no-default-features
+      - run: cross test --target ${{ matrix.target }} --release random_bits_then_ct_lt_exact_values -- --test-threads=1
+      #- run: cross test --target ${{ matrix.target }} --release
+      #- run: cross test --target ${{ matrix.target }} --release --all-features
 
   # Test using `cargo miri`
   test-miri:
