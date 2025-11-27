@@ -84,6 +84,9 @@ mod tests {
         ($size:expr, $test_name:ident) => {
             #[test]
             fn $test_name() {
+                extern crate std;
+                use std::eprintln;
+
                 let mut rng = chacha20::ChaCha8Rng::seed_from_u64(1);
                 let moduli = [
                     NonZero::<Limb>::random(&mut rng),
@@ -94,6 +97,7 @@ mod tests {
                     let p =
                         &NonZero::new(Uint::ZERO.wrapping_sub(&Uint::from(special.get()))).unwrap();
 
+                    eprintln!("p={p}");
                     let minus_one = p.wrapping_sub(&Uint::ONE);
 
                     let base_cases = [
@@ -108,15 +112,19 @@ mod tests {
                         assert_eq!(*c, x, "{} + {} mod {} = {} != {}", a, b, p, x, c);
                     }
 
-                    for _i in 0..100 {
+                    for i in 0..100 {
+                        eprintln!("iter {i}");
                         let a = Uint::<$size>::random_mod(&mut rng, p);
+                        eprintln!("a={a}");
                         let b = Uint::<$size>::random_mod(&mut rng, p);
+                        eprintln!("b={b}");
 
                         let c = a.add_mod_special(&b, *special.as_ref());
                         assert!(c < **p, "not reduced: {} >= {} ", c, p);
 
                         let expected = a.add_mod(&b, p);
                         assert_eq!(c, expected, "incorrect result");
+                        eprintln!("iter {i} done");
                     }
                 }
             }
