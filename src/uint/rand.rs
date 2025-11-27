@@ -540,6 +540,49 @@ mod tests {
         }
     }
 
+    /// Diagnostic: Test u128 arithmetic that borrowing_sub relies on
+    /// This specifically tests the pattern used in primitives::borrowing_sub
+    #[test]
+    fn u128_subtraction_borrow_diagnostic() {
+        // Reproduce the exact u128 arithmetic from borrowing_sub
+        let a: u128 = 55;  // lhs as WideWord
+        let b: u128 = 8192;  // rhs as WideWord
+        let ret = a.wrapping_sub(b);
+
+        // Extract low and high words
+        let low = ret as u64;
+        let high = (ret >> 64) as u64;
+
+        // When a < b, ret should be 2^128 + (a - b) = 2^128 - 8137
+        // low should be 2^64 - 8137 = 0xFFFFFFFFFFFFE017
+        // high should be 2^64 - 1 = 0xFFFFFFFFFFFFFFFF
+        assert_eq!(
+            high, u64::MAX,
+            "u128 subtraction borrow should produce high word = MAX, got {:#018x}",
+            high
+        );
+
+        // Also verify the low word
+        let expected_low = 0u64.wrapping_sub(8137);  // 2^64 - 8137
+        assert_eq!(
+            low, expected_low,
+            "u128 subtraction should produce expected low word, got {:#018x} expected {:#018x}",
+            low, expected_low
+        );
+
+        // Test the specific pattern from borrowing_sub
+        // This matches: let ret = a.wrapping_sub(b + borrow);
+        let borrow_input: u64 = 0;
+        let borrow = (borrow_input >> 63) as u128;  // Should be 0
+        let ret2 = a.wrapping_sub(b + borrow);
+        let computed_borrow = (ret2 >> 64) as u64;
+        assert_eq!(
+            computed_borrow, u64::MAX,
+            "borrowing_sub pattern should produce borrow = MAX, got {:#018x}",
+            computed_borrow
+        );
+    }
+
     /// Diagnostic: Compare fill_bytes vs next_u64 byte sequences
     /// This tests if the RNG produces the same bytes regardless of how we consume them
     #[test]
@@ -606,7 +649,6 @@ mod tests {
     fn old_algorithm_prefilter_simulation() {
         let mut rng = get_four_sequential_rng();
 
-        let n_bits = 14u32;
         let hi_word_modulus: u64 = 8192;
         let mask: u64 = !0 >> hi_word_modulus.leading_zeros();
 
