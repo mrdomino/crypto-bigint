@@ -92,6 +92,7 @@ mod tests {
                     NonZero::<Limb>::random(&mut rng),
                     NonZero::<Limb>::random(&mut rng),
                 ];
+                eprintln!("{moduli:?}");
 
                 for special in &moduli {
                     let p =
